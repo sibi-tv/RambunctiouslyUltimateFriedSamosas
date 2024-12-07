@@ -55,11 +55,19 @@ int get_avail_ino() {
 int get_avail_blkno() {
 
 	// Step 1: Read data block bitmap from disk
-	
-	
-	// Step 2: Traverse data block bitmap to find an available slot
+	bitmap_t data_bitmap = (unsigned char*) malloc(BLOCK_SIZE);
+	bio_read(superblock->d_start_blk, data_bitmap);
 
-	// Step 3: Update data block bitmap and write to disk 
+	// Step 2: Traverse data block bitmap to find an available slot
+	for(int i = 0; i < superblock->max_dnum; i++){
+		if(!get_bitmap(data_bitmap, i)){
+
+			// Step 3: Update data block bitmap and write to disk 
+			set_bitmap(data_bitmap, i);
+			bio_write(superblock->d_bitmap_blk, data_bitmap);
+			return i;
+		}
+	}
 
 	return 0;
 }
@@ -79,7 +87,7 @@ int readi(uint16_t ino, struct inode *inode) {
 	bio_read(block_num, desired_block);
 
 	unsigned char * ptr = desired_block + sizeof(inode)*offset;
-	memcpy(inode, ptr, sizeof(index_node));
+	memcpy(ptr, inode, sizeof(index_node));
 
 	return 0;
 }
@@ -87,10 +95,19 @@ int readi(uint16_t ino, struct inode *inode) {
 int writei(uint16_t ino, struct inode *inode) {
 
 	// Step 1: Get the block number where this inode resides on disk
+	int block_num = superblock->i_start_blk + (ino)/(BLOCK_SIZE/sizeof(inode));
 	
 	// Step 2: Get the offset in the block where this inode resides on disk
+	int offset = ino % (BLOCK_SIZE/sizeof(inode));
 
 	// Step 3: Write inode to disk 
+	unsigned char* desired_block = (unsigned char*)malloc(BLOCK_SIZE);
+	bio_read(block_num, desired_block);
+
+	unsigned char * ptr = desired_block + sizeof(inode)*offset;
+	memcpy(inode, ptr, sizeof(index_node));
+
+	bio_write(block_num, desired_block);
 
 	return 0;
 }
@@ -249,7 +266,7 @@ static void rufs_destroy(void *userdata) {
 
 }
 
-static int rufs_getattr(const char *path, struct stat *stbuf) {
+static int rufs_getattr(const char *path, struct stat *stbuf) { // Sibi
 
 	// Step 1: call get_node_by_path() to get inode from path
 
@@ -262,7 +279,7 @@ static int rufs_getattr(const char *path, struct stat *stbuf) {
 	return 0;
 }
 
-static int rufs_opendir(const char *path, struct fuse_file_info *fi) {
+static int rufs_opendir(const char *path, struct fuse_file_info *fi) { // Rahul
 
 	// Step 1: Call get_node_by_path() to get inode from path
 
@@ -271,7 +288,7 @@ static int rufs_opendir(const char *path, struct fuse_file_info *fi) {
     return 0;
 }
 
-static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
+static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) { // Rahul
 
 	// Step 1: Call get_node_by_path() to get inode from path
 
@@ -281,7 +298,7 @@ static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, 
 }
 
 
-static int rufs_mkdir(const char *path, mode_t mode) {
+static int rufs_mkdir(const char *path, mode_t mode) { // Sibi
 
 	// Step 1: Use dirname() and basename() to separate parent directory path and target directory name
 
@@ -322,7 +339,7 @@ static int rufs_releasedir(const char *path, struct fuse_file_info *fi) {
     return 0;
 }
 
-static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi) { // Sibi
 	printf("shush\n");
 	// Step 1: Use dirname() and basename() to separate parent directory path and target file name
 
@@ -339,7 +356,7 @@ static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 	return 0;
 }
 
-static int rufs_open(const char *path, struct fuse_file_info *fi) {
+static int rufs_open(const char *path, struct fuse_file_info *fi) { // Sibi
 
 	// Step 1: Call get_node_by_path() to get inode from path
 
@@ -348,7 +365,7 @@ static int rufs_open(const char *path, struct fuse_file_info *fi) {
 	return 0;
 }
 
-static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
+static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) { // Rahul
 
 	// Step 1: You could call get_node_by_path() to get inode from path
 
@@ -360,7 +377,7 @@ static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, 
 	return 0;
 }
 
-static int rufs_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
+static int rufs_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) { // Rahul
 	// Step 1: You could call get_node_by_path() to get inode from path
 
 	// Step 2: Based on size and offset, read its data blocks from disk
