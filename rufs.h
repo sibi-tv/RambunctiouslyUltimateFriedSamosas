@@ -26,7 +26,7 @@ struct superblock {
 	uint32_t	d_bitmap_blk;		/* start block of data block bitmap */
 	uint32_t	i_start_blk;		/* start block of inode region */
 	uint32_t	d_start_blk;		/* start block of data block region */
-};
+} typedef sb;
 
 struct inode {
 	uint16_t	ino;				/* inode number */
@@ -37,20 +37,24 @@ struct inode {
 	int			direct_ptr[16];		/* direct pointer to data block */
 	int			indirect_ptr[8];	/* indirect pointer to data block */
 	struct stat	vstat;				/* inode stat */
-};
+} typedef index_node;
 
 struct dirent {
 	uint16_t ino;					/* inode number of the directory entry */
 	uint16_t valid;					/* validity of the directory entry */
 	char name[208];					/* name of the directory entry */
 	uint16_t len;					/* length of name */
-};
-
+} typedef direntry;
 
 /*
  * bitmap operations
  */
 typedef unsigned char* bitmap_t;
+
+/**
+ * Memory Data Structures
+ */
+sb* superblock; // used for memory purposes only
 
 void set_bitmap(bitmap_t b, int i) {
     b[i / 8] |= 1 << (i & 7);
