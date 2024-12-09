@@ -17,6 +17,11 @@
 #define MAX_INUM 1024
 #define MAX_DNUM 16384
 
+#define VALID 1
+#define INVALID 0
+
+#define MAX_DIRENTS (BLOCK_SIZE/sizeof(direntry))
+
 
 struct superblock {
 	uint32_t	magic_num;			/* magic number */
@@ -42,7 +47,7 @@ struct inode {
 struct dirent {
 	uint16_t ino;					/* inode number of the directory entry */
 	uint16_t valid;					/* validity of the directory entry */
-	char name[208];					/* name of the directory entry */
+	char name[250];					/* name of the directory entry */
 	uint16_t len;					/* length of name */
 } typedef direntry;
 
