@@ -580,32 +580,33 @@ static int rufs_open(const char *path, struct fuse_file_info *fi) { // Sibi
 static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) { // Rahul
 
 	// Step 1: You could call get_node_by_path() to get inode from path
-	index_node * gaf = malloc(sizeof(index_node));
-	get_node_by_path(path, 0, gaf);
+	index_node * in = malloc(sizeof(index_node));
+	get_node_by_path(path, 0, in);
 
 	// Step 2: Based on size and offset, read its data blocks from disk
+	// Step 3: copy the correct amount of data from offset to buffer
 
 	int index = offset / BLOCK_SIZE;
-	unsigned char * buff = malloc(BLOCK_SIZE);
-	bio_read(gaf->direct_ptr[index], buff);
+	unsigned char * blocko = malloc(BLOCK_SIZE);
+	bio_read(in->direct_ptr[index], blocko);
 
 	int s = size;
 
-	memcpy(buffer, buff + (offset % BLOCK_SIZE), BLOCK_SIZE - (offset % BLOCK_SIZE));
+	memcpy(buffer, blocko + (offset % BLOCK_SIZE), BLOCK_SIZE - (offset % BLOCK_SIZE));
 
 	index++;
-	while(size > 0){
+	for(int i = 0; i < 16 && (size > 0); i++){
 		if(size > BLOCK_SIZE){
-			
+			memcpy(buffer + (i * BLOCK_SIZE), blocko, size);
+			size = 0;
+		}else{
+			memcpy(buffer + (i * BLOCK_SIZE), blocko, BLOCK_SIZE);
+			size -= BLOCK_SIZE;
 		}
 	}
 
-	memcpy(buffer, )
-
-	// Step 3: copy the correct amount of data from offset to buffer
-
 	// Note: this function should return the amount of bytes you copied to buffer
-	return 0;
+	return size;
 }
 
 static int rufs_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) { // Rahul
