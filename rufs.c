@@ -6,10 +6,12 @@
  */
 
 #define FUSE_USE_VERSION 26
+#define _GNU_SOURCE
 
 #include <fuse.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <sys/types.h>
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -317,6 +319,7 @@ int rufs_mkfs() {
 	root_dirents->ino = 0; 
 
 	root_dir->direct_ptr[0] = supahblock->d_start_blk;
+	root_dir->vstat.st_mode = 0755 | S_IFDIR;
 
 	set_bitmap(dblock_bitmap, 0);
 	set_bitmap(dblock_bitmap, supahblock->i_bitmap_blk);
@@ -387,13 +390,18 @@ static int rufs_getattr(const char *path, struct stat *stbuf) { // Sibi // initi
 		return -ENOENT;
 	}
 
+	stbuf->st_gid = getgid();
+	stbuf->st_uid = getuid();
+
 	// Step 2: fill attribute of file into stbuf from inode
-	if (strcmp(path, "/") == 0) {
-		stbuf->st_mode   = __S_IFDIR | 0755;
+	if (strcmp(path, "/") == 0 || dir_var == 1) {
+		printf("Type of S_IFDIR is %s\n", (sizeof(S_IFDIR) == sizeof(mode_t)) ? "mode_t" : "not mode_t");
+		dir_var = 0;
+		stbuf->st_mode   = (inode->vstat.st_mode) | S_IFDIR;
 		stbuf->st_nlink  = 2;
 		inode->link = 1;
 	} else {
-		stbuf->st_mode = __S_IFREG | 0644;
+		stbuf->st_mode =S_IFREG | 0644;
 		stbuf->st_nlink  = 1;
 		index_node * directory_node = (index_node*)malloc(sizeof(index_node));
 		get_node_by_path(dirname((char*) path), 0, directory_node);
@@ -403,14 +411,14 @@ static int rufs_getattr(const char *path, struct stat *stbuf) { // Sibi // initi
 		time(&(directory_node->vstat.st_atime));
 	}
 	
-	stbuf->st_gid = getgid();
-	stbuf->st_uid = getuid();
 	stbuf->st_ino = inode->ino;
 	stbuf->st_size = (inode->size)*BLOCK_SIZE;
 	time(&stbuf->st_mtime);
 	time(&stbuf->st_atime);
+
+	*stbuf = inode->vstat;
 	
-	free(inode);
+	//free(inode);
 	return 0;
 }
 
@@ -459,19 +467,33 @@ static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, 
 
 static int rufs_mkdir(const char *path, mode_t mode) { // Sibi
 	// Step 1: Use dirname() and basename() to separate parent directory path and target directory name
-	char* parent_directory = dirname((char*)path);
-	char* base = basename((char*)path);
+	char* p1 = (char*) malloc(strlen(path));
+	char* p2 = (char*) malloc(strlen(path));
+	memcpy(p1, path, strlen(path)+1);
+	p1[strlen(path)] = '\0';
+	memcpy(p2, path, strlen(path)+1);
+	p2[strlen(path)] = '\0';
+	char* parent_directory = dirname(p1);
+	char* base = basename(p2);
 
 	// Step 2: Call get_node_by_path() to get inode of parent directory
 	index_node * dir_inode = (index_node*) malloc(sizeof(index_node));
-	get_node_by_path(parent_directory, 0, dir_inode);
+	int a = get_node_by_path(parent_directory, 0, dir_inode);
+	if (a == -1) {
+		free(dir_inode);
+		return -ENOENT;
+	}
+
+	printf("..................YEYEYEYEYE\n");
 
 	// Step 3: Call get_avail_ino() to get an available inode number
 	int ino = get_avail_ino();
 
 	// Step 4: Call dir_add() to add directory entry of target directory to parent directory
-	if (dir_add(dir_inode, ino, base, strlen(base)) == 0) {
-		return -1;
+	int b = dir_add(dir_inode, ino, base, strlen(base));
+	if (b == 0) {
+		free(dir_inode);
+		return -EIO;
 	}
 
 	// Step 5: Update inode for target directory
@@ -480,14 +502,25 @@ static int rufs_mkdir(const char *path, mode_t mode) { // Sibi
 	for (int i = 1; i < 16; i++) { target_node->direct_ptr[i] = -1; }
 	target_node->ino = ino;
 	target_node->size = 1;
+	target_node->link = 1;
+	target_node->type = 1;
 	target_node->valid = VALID;
-	direntry* root_dirents = (direntry*) malloc(BLOCK_SIZE);
-	for (int i = 0; i < MAX_DIRENTS; i++) { root_dirents->valid = INVALID; }
-	bio_write(target_node->direct_ptr[0], root_dirents);
+	target_node->vstat.st_gid = getgid();
+	target_node->vstat.st_uid = getuid();
+	target_node->vstat.st_size = BLOCK_SIZE*target_node->size;
+	target_node->vstat.st_mode = mode | S_IFDIR;
+	printf("mode: %d", mode);
+	target_node->vstat.st_nlink = 1;
+	time(&(target_node->vstat.st_atime));
+    time(&(target_node->vstat.st_mtime));
+
+	direntry* dirents = (direntry*) malloc(BLOCK_SIZE);
+	bio_write(target_node->direct_ptr[0], dirents);
 
 	// Step 6: Call writei() to write inode to disk
 	writei(ino, target_node);
-
+	printf("..................FUCCKKKK\n");
+	dir_var = 1;
 	return 0;
 }
 
@@ -532,8 +565,6 @@ static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 		free(dir_inode);
 		return -ENOENT;
 	}
-
-	
 
 	// Step 3: Call get_avail_ino() to get an available inode number
 	int ino = get_avail_ino();

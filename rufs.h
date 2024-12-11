@@ -60,6 +60,7 @@ typedef unsigned char* bitmap_t;
  * Memory Data Structures
  */
 sb* superblock; // used for memory purposes only
+static int dir_var;
 
 void set_bitmap(bitmap_t b, int i) {
     b[i / 8] |= 1 << (i & 7);
