@@ -1,3 +1,4 @@
+fusermount -u /tmp/st1005/mountdir
 make clean
 make
 rm DISKFILE.txt

@@ -6,7 +6,6 @@
  */
 
 #define FUSE_USE_VERSION 26
-#define _GNU_SOURCE
 
 #include <fuse.h>
 #include <stdlib.h>
@@ -44,8 +43,10 @@ int get_avail_ino() {
 	if (ino < superblock->max_inum) {
 		set_bitmap(inode_bitmap, ino);
 		bio_write(superblock->i_bitmap_blk, inode_bitmap);
+		free(inode_bitmap);
 		return ino;
 	}
+	free(inode_bitmap);
 
 	return 0;
 }
@@ -65,10 +66,11 @@ int get_avail_blkno() {
 			// Step 3: Update data block bitmap and write to disk 
 			set_bitmap(data_bitmap, i);
 			bio_write(superblock->d_bitmap_blk, data_bitmap);
+			free(data_bitmap);
 			return i;
 		}
 	}
-
+	free(data_bitmap);
 	return 0;
 }
 
@@ -87,7 +89,7 @@ int readi(uint16_t ino, struct inode *inode) { // assumes that ino is checked be
 
 	index_node * ptr = ((index_node*)desired_block) + offset;
 	memcpy(inode, ptr, sizeof(index_node));
-
+	free(desired_block);
 	return 1;
 }
 
@@ -99,14 +101,16 @@ int writei(uint16_t ino, struct inode *inode) {
 	int offset = ino % (BLOCK_SIZE/sizeof(inode));
 
 	// Step 3: Write inode to disk 
-	unsigned char* desired_block = (unsigned char*)malloc(BLOCK_SIZE);
+	index_node* desired_block = malloc(BLOCK_SIZE);
 	bio_read(block_num, desired_block);
 
-	index_node * ptr = ((index_node*)desired_block) + offset;
+	index_node * ptr = (desired_block) + offset;
 	memcpy(ptr, inode, sizeof(index_node));
 
 	bio_write(block_num, desired_block);
-
+	printf("goofy ahh\n");
+	//free(desired_block);
+	printf("goofy ahh\n");
 	return 0;
 }
 
@@ -115,12 +119,11 @@ int writei(uint16_t ino, struct inode *inode) {
  * directory operations
  */
 int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *dirent) {
-	printf("on a spaceship\n");
+	printf("cuh\n");
 	// Step 1: Call readi() to get the inode using ino (inode number of current directory)
 	index_node* curr_dir = (index_node*)malloc(sizeof(index_node));
+	printf("cuh\n");
 	readi(ino, curr_dir);
-
-	printf("on a spaceship\n");
 
 	// Step 2: Get data block of current directory from inode
 	for (int i = 0; i < 16; i++) {
@@ -129,7 +132,11 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 		 * and this block (and therefore subsequent blocks) haven't even been allocated. 
 		 * So the fname is not in this directory.
 		*/ 
-		if (curr_dir->direct_ptr[i] == -1) { return 0; }
+		if (curr_dir->direct_ptr[i] == -1) { 
+			free(curr_dir);
+
+			return 0; 
+		}
 		
 		int data_block_num = curr_dir->direct_ptr[i];
 		unsigned char* data_block = (unsigned char *) malloc(BLOCK_SIZE);
@@ -150,6 +157,9 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 		}
 
 		if (ptr != NULL && ptr->valid == INVALID) { 
+			free(data_block);
+			free(curr_dir);
+
 			return 0; // failure
 		}
 	}
@@ -186,7 +196,7 @@ int dir_add(struct inode* dir_inode, uint16_t f_ino, const char *fname, size_t n
 
 		// Step 3: Add directory entry in dir_inode's data block and write to disk
 		if (ptr != NULL) {
-			printf("😹\n");
+			//free(a);
 			ptr->ino = f_ino;
 			ptr->valid = VALID;
 			strncpy(ptr->name, fname, name_len);
@@ -194,10 +204,11 @@ int dir_add(struct inode* dir_inode, uint16_t f_ino, const char *fname, size_t n
 			ptr->len = name_len;
 			// Write directory entry
 			bio_write(data_block_num, data_block);
+			free(data_block);
 
 			return 1;
 		}
-		printf("🥵\n");
+		free(data_block);
 	}
 
 	// Step 3: Add directory entry in dir_inode's data block and write to disk
@@ -221,6 +232,9 @@ int dir_add(struct inode* dir_inode, uint16_t f_ino, const char *fname, size_t n
 
 		// Write directory entry
 		bio_write(new_block_num, new_block);
+		free(new_block);
+
+		return 1;
 	}
 
 	return 0;
@@ -244,16 +258,15 @@ int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
 	// Step 1: Resolve the path name, walk through path, and finally, find its inode.
 	// Note: You could either implement it in a iterative way or recursive way
 
+	printf("path: %s ino: %d\n", path, ino);
 	// this code below finds the dirent of the current directory and checks if it exists. If it doesn't, return 0.
 	int index = 0; // number of characters/bytes in dir/file name == index of closest '/'
-	const char* ptr; 
+	char* ptr; 
 	if (path[0] != '/') { // the passed path DOES NOT include root directory
 		ptr = path; 
 	} else { // the passed path DOES include root directory
 		ptr = path + 1;
 	}
-
-	printf("You're a kind bitchass\n");
 
 	while ((ptr + index)[0] != '\0' && ptr[index] != '/') { // if ptr + index == NULL then you're at the terminal point
 		index++;
@@ -263,38 +276,41 @@ int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
 		readi(ino, inode);
 		return 0; // success
 	}
+	printf("ptr: %s, index: %d\n", ptr, index);
 
-	printf("EDP Mode Activated\n");
 
 	char* dir_entry_name = (char*) malloc(index+1);
 	memcpy(dir_entry_name, ptr, index);
 	dir_entry_name[index] = '\0';
 
-	printf("Path: %s, dir entry name: %s, ino: %d\n", path, dir_entry_name, ino);
-	printf("why ahh u gae? %ld\n", MAX_DIRENTS);
+	
+
 	unsigned char * dir_entry = malloc(sizeof(direntry));
+	printf("cooooooooooooooooooooo\n");
 	//direntry* dir_entry = (direntry*) malloc(256);
-	printf("why ahh u gae?\n");
+
 	if (dir_find(ino, dir_entry_name, 0, ((direntry*)dir_entry)) == 0) { // dirent was not found
-		printf("NOOOOOOO\n");
 		free(dir_entry_name);
 		free(dir_entry);
 		return -1; // failure
 	} else {
-		printf("Diddy do it\n");
 		int node_ino = ((direntry*)dir_entry)->ino;
-		if ((ptr + index)[0] == '\0') { // Reached terminal point
-			printf("Rod wave results in mass tsunami\n");			
+		if ((ptr + index)[0] == '\0') { // Reached terminal point	
+			printf("there\n");
 			readi(node_ino, inode);
 			free(dir_entry);
 			free(dir_entry_name);
 
 			return 0; // success
 		} else {
-			printf("Path: %s\n", path);
+			printf("here\n");
+			free(dir_entry);
+			free(dir_entry_name);
+
 			return get_node_by_path(ptr+index, node_ino, inode);
 		}
 	}
+	printf("coo\n");
 }
 
 /* 
@@ -344,7 +360,7 @@ int rufs_mkfs() {
 	root_dirents->ino = 0; 
 
 	root_dir->direct_ptr[0] = supahblock->d_start_blk;
-	root_dir->vstat.st_mode = 0755 | S_IFDIR;
+	root_dir->vstat.st_mode = 0755 | __S_IFDIR;
 	root_dir->vstat.st_size = BLOCK_SIZE;
 
 	set_bitmap(dblock_bitmap, 0);
@@ -358,6 +374,12 @@ int rufs_mkfs() {
 	bio_write(supahblock->d_bitmap_blk, dblock_bitmap);
 	bio_write(supahblock->i_start_blk, root_dir);
 	bio_write(supahblock->d_start_blk, root_dirents);
+
+	free(supahblock);
+	free(inode_bitmap);
+	free(dblock_bitmap);
+	free(root_dir);
+	free(root_dirents);
 
 	return 0;
 }
@@ -383,11 +405,11 @@ static void *rufs_init(struct fuse_conn_info *conn) {
 	superblock = (sb*)malloc(BLOCK_SIZE);
 	bio_read(0, superblock);
 
-	bitmap_t inode_bitmap = (unsigned char*)malloc(BLOCK_SIZE);
-	bio_read(superblock->i_bitmap_blk, inode_bitmap);
+	// bitmap_t inode_bitmap = (unsigned char*)malloc(BLOCK_SIZE);
+	// bio_read(superblock->i_bitmap_blk, inode_bitmap);
 
-	bitmap_t data_bitmap = (unsigned char*)malloc(BLOCK_SIZE);
-	bio_read(superblock->d_bitmap_blk, data_bitmap);
+	// bitmap_t data_bitmap = (unsigned char*)malloc(BLOCK_SIZE);
+	// bio_read(superblock->d_bitmap_blk, data_bitmap);
 	
 	return NULL;
 }
@@ -403,12 +425,12 @@ static void rufs_destroy(void *userdata) {
 }
 
 static int rufs_getattr(const char *path, struct stat *stbuf) { // Sibi // initializes an inode's vstat
-	printf("iphone 14\n");
+	printf("🥶🥶🥶🥶🥶 nah\n");
 	// Step 1: call get_node_by_path() to get inode from path
+	printf("nopee\n");
 	index_node * inode = (index_node*)malloc(sizeof(index_node));
-	printf("path: %s\n", path);
+	printf("nope\n");
 	int bruh = get_node_by_path(path, 0, inode);
-	printf("tacos\n");
 	// direntry* dd = (direntry*)malloc(BLOCK_SIZE);
 	// bio_read(inode->direct_ptr[0], dd);
 	
@@ -417,18 +439,19 @@ static int rufs_getattr(const char *path, struct stat *stbuf) { // Sibi // initi
 		return -ENOENT;
 	}
 
+	printf("🥵🥵🥵🥵🥵 yuh\n");
+
 	stbuf->st_gid = getgid();
 	stbuf->st_uid = getuid();
 
 	// Step 2: fill attribute of file into stbuf from inode
 	if (strcmp(path, "/") == 0 || dir_var == 1) {
-		printf("Type of S_IFDIR is %s\n", (sizeof(S_IFDIR) == sizeof(mode_t)) ? "mode_t" : "not mode_t");
 		dir_var = 0;
-		stbuf->st_mode   = (inode->vstat.st_mode) | S_IFDIR;
+		stbuf->st_mode   = (inode->vstat.st_mode) | __S_IFDIR;
 		stbuf->st_nlink  = 2;
 		inode->link = 1;
 	} else {
-		stbuf->st_mode =S_IFREG | 0644;
+		stbuf->st_mode = __S_IFREG | 0644;
 		stbuf->st_nlink  = 1;
 		index_node * directory_node = (index_node*)malloc(sizeof(index_node));
 		get_node_by_path(dirname((char*) path), 0, directory_node);
@@ -436,6 +459,8 @@ static int rufs_getattr(const char *path, struct stat *stbuf) { // Sibi // initi
 		directory_node->vstat.st_nlink += 1;
 		time(&(directory_node->vstat.st_mtime));
 		time(&(directory_node->vstat.st_atime));
+		writei(directory_node->ino, directory_node);
+		free(directory_node);
 	}
 	
 	stbuf->st_ino = inode->ino;
@@ -445,7 +470,7 @@ static int rufs_getattr(const char *path, struct stat *stbuf) { // Sibi // initi
 
 	*stbuf = inode->vstat;
 	
-	//free(inode);
+	free(inode);
 	return 0;
 }
 
@@ -455,7 +480,9 @@ static int rufs_opendir(const char *path, struct fuse_file_info *fi) { // Rahul
 	index_node * in = (index_node*)malloc(sizeof(index_node));
 
 	// Step 2: If not find, return -1
-    return get_node_by_path(path, 0, in);
+	int val = get_node_by_path(path, 0, in);
+	free(in);
+    return val;
 }
 
 static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) { // Rahul
@@ -464,29 +491,23 @@ static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, 
 	index_node * in = (index_node*)malloc(sizeof(index_node));
     get_node_by_path(path, 0, in);
 
-	printf(".........Gaffot\n");
-
 	// Step 2: Read directory entries from its data blocks, and copy them to filler
 	for(int i = 0; i < in->size; i++){
-
-		printf(".........Gaffot\n");
-
-		direntry * copythebastard = malloc(BLOCK_SIZE);
-		bio_read(in->direct_ptr[i], copythebastard);
-		
-		printf(".........Moron\n");
-
-		for(int j = 0; j < MAX_DIRENTS && copythebastard->valid != INVALID; j++){
+		direntry * b = malloc(BLOCK_SIZE);
+		bio_read(in->direct_ptr[i], b);
+		direntry* a = b;
+		for(int j = 0; j < MAX_DIRENTS && a->valid != INVALID; j++){
 			index_node * bruh = malloc(sizeof(index_node));
-			readi(copythebastard->ino, bruh);
-			filler(buffer, copythebastard->name, &(bruh->vstat), offset);
-			printf("LS YEAAAA BABYYYY\n");
-			copythebastard += 1;
+			readi(a->ino, bruh);
+			filler(buffer, a->name, &(bruh->vstat), offset);
+			a += 1;
+			free(bruh);
 		}
+		free(b);
 		// memcpy(buffer + (i * BLOCK_SIZE), copythebastard, BLOCK_SIZE);
 	}
 
-	
+	free(in);
 
 	return 0;
 }
@@ -508,12 +529,10 @@ static int rufs_mkdir(const char *path, mode_t mode) { // Sibi
 	int a = get_node_by_path(parent_directory, 0, dir_inode);
 	if (a == -1) {
 		free(dir_inode);
+		free(p1);
+		free(p2);
 		return -ENOENT;
 	}
-	printf("parent_diectory: %s, dir_inode: %d\n", parent_directory, dir_inode->ino);
-	printf("base: %s\n", base);
-
-	printf("..................YEYEYEYEYE\n");
 
 	// Step 3: Call get_avail_ino() to get an available inode number
 	int ino = get_avail_ino();
@@ -522,10 +541,17 @@ static int rufs_mkdir(const char *path, mode_t mode) { // Sibi
 	int b = dir_add(dir_inode, ino, base, strlen(base));
 	if (b == 0) {
 		free(dir_inode);
+		free(p1);
+		free(p2);
 		return -EIO;
 	}
-
-	printf("RUUUUUUUSHHD\n");
+	if (strcmp(parent_directory, "/files") == 0) {
+		printf("dir_node inode num: %d\n", dir_inode->ino);
+		direntry* bruhh = malloc(BLOCK_SIZE);
+		bio_read(dir_inode->direct_ptr[0], bruhh);
+		printf("bruhh %s\n", (bruhh+14)->name);
+	}
+	
 
 	// Step 5: Update inode for target directory
 	index_node* target_node = (index_node*)malloc(sizeof(index_node));
@@ -539,20 +565,18 @@ static int rufs_mkdir(const char *path, mode_t mode) { // Sibi
 	target_node->vstat.st_gid = getgid();
 	target_node->vstat.st_uid = getuid();
 	target_node->vstat.st_size = BLOCK_SIZE*target_node->size;
-	target_node->vstat.st_mode = mode | S_IFDIR;
-	printf("mode: %d", mode);
+	target_node->vstat.st_mode = mode | __S_IFDIR;
 	target_node->vstat.st_nlink = 1;
 	time(&(target_node->vstat.st_atime));
     time(&(target_node->vstat.st_mtime));
-
-	printf("RAAAAAGGGGGG\n");
-
 	direntry* dirents = (direntry*) malloc(BLOCK_SIZE);
 	bio_write(target_node->direct_ptr[0], dirents);
-
+	printf("RUUUUUUUSHHD\n");
 	// Step 6: Call writei() to write inode to disk
 	writei(ino, target_node);
-	printf("..................FUCCKKKK\n");
+	printf("no");
+	free(target_node);
+	printf("yes");
 	dir_var = 1;
 	return 0;
 }
@@ -596,6 +620,8 @@ static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 	int a = get_node_by_path(parent_directory, 0, dir_inode);
 	if (a == -1) {
 		free(dir_inode);
+		free(p1);
+		free(p2);
 		return -ENOENT;
 	}
 
@@ -607,6 +633,8 @@ static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 	int b = dir_add(dir_inode, ino, base, strlen(base));
 	if (b == 0) {
 		free(dir_inode);
+		free(p1);
+		free(p2);
 		return -EIO;
 	}
 
@@ -628,6 +656,7 @@ static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 	
 	// Step 6: Call writei() to write inode to disk
 	writei(ino, target_node);
+	free(target_node);
 
 	return 0;
 }
@@ -638,7 +667,9 @@ static int rufs_open(const char *path, struct fuse_file_info *fi) { // Sibi
 	index_node * in = (index_node*)malloc(sizeof(index_node));
 
 	// Step 2: If not find, return -1
-    return get_node_by_path(path, 0, in);
+	int val = get_node_by_path(path, 0, in);
+	free(in);
+    return val;
 }
 
 static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) { // Rahul
@@ -671,6 +702,9 @@ static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, 
 		}
 	}
 
+	free(blocko);
+	free(in);
+
 	// Note: this function should return the amount of bytes you copied to buffer
 	return size;
 }
@@ -684,7 +718,6 @@ static int rufs_write(const char *path, const char *buffer, size_t size, off_t o
 	// Step 3: Write the correct amount of data from offset to disk
 	int index = offset / BLOCK_SIZE;
 	unsigned char * blocko = malloc(BLOCK_SIZE);
-	//printf("bruehhhhhhhhhhhh: %d, index: %d, size: %ld, offset: %d\n", in->direct_ptr[index], index, size, offset);
 
 	if (in->direct_ptr[index] == -1) {
 		in->direct_ptr[index]= get_avail_blkno();
@@ -723,10 +756,11 @@ static int rufs_write(const char *path, const char *buffer, size_t size, off_t o
 		bio_write(in->direct_ptr[i], block_is_hot);
 	}
 
+	free(blocko);
+	free(in);
 	// Step 4: Update the inode info and write it to disk
 
 	// Note: this function should return the amount of bytes you write to disk
-	printf("PURSSIOIOIOI %ld\n", size);
 	return size;
 }
 
