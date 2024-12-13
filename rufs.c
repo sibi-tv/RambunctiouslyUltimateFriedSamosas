@@ -79,15 +79,15 @@ int get_avail_blkno() {
  */
 int readi(uint16_t ino, struct inode *inode) { // assumes that ino is checked beforehand and that this method always runs successfully
   // Step 1: Get the inode's on-disk block number
-  	int block_num = superblock->i_start_blk + (ino)/(BLOCK_SIZE/sizeof(inode));
+  	int block_num = superblock->i_start_blk + (ino)/(BLOCK_SIZE/sizeof(index_node));
 
   // Step 2: Get offset of the inode in the inode on-disk block
-	int offset = ino % (BLOCK_SIZE/sizeof(inode));
+	int offset = ino % (BLOCK_SIZE/sizeof(index_node));
   // Step 3: Read the block from disk and then copy into inode structure
-  	unsigned char* desired_block = (unsigned char*)malloc(BLOCK_SIZE);
+  	index_node* desired_block = malloc(BLOCK_SIZE);
 	bio_read(block_num, desired_block);
 
-	index_node * ptr = ((index_node*)desired_block) + offset;
+	index_node * ptr = (desired_block) + offset;
 	memcpy(inode, ptr, sizeof(index_node));
 	free(desired_block);
 	return 1;
@@ -95,21 +95,28 @@ int readi(uint16_t ino, struct inode *inode) { // assumes that ino is checked be
 
 int writei(uint16_t ino, struct inode *inode) {
 	// Step 1: Get the block number where this inode resides on disk
-	int block_num = superblock->i_start_blk + (ino)/(BLOCK_SIZE/sizeof(inode));
+	int block_num = superblock->i_start_blk + (ino)/(BLOCK_SIZE/sizeof(index_node));
 	
 	// Step 2: Get the offset in the block where this inode resides on disk
-	int offset = ino % (BLOCK_SIZE/sizeof(inode));
+	int offset = ino % (BLOCK_SIZE/sizeof(index_node));
 
 	// Step 3: Write inode to disk 
 	index_node* desired_block = malloc(BLOCK_SIZE);
 	bio_read(block_num, desired_block);
+
+	printf("-> ino: %d\n", ino);
+	printf("-> BLOCKSIZ: %d\n", BLOCK_SIZE);
+	printf("-> sizeof(inode): %ld\n", sizeof(index_node));
+	printf("HERE-> number of inodes per block: %ld\n", (BLOCK_SIZE/sizeof(index_node)));
+
+	printf("NUMMOOOOOOOOOO: %d offset: %d\n", (desired_block)->ino, offset);
 
 	index_node * ptr = (desired_block) + offset;
 	memcpy(ptr, inode, sizeof(index_node));
 
 	bio_write(block_num, desired_block);
 	printf("goofy ahh\n");
-	//free(desired_block);
+	free(desired_block);
 	printf("goofy ahh\n");
 	return 0;
 }
@@ -119,33 +126,36 @@ int writei(uint16_t ino, struct inode *inode) {
  * directory operations
  */
 int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *dirent) {
-	printf("cuh\n");
+	printf("1. CUHHH\n");
 	// Step 1: Call readi() to get the inode using ino (inode number of current directory)
 	index_node* curr_dir = (index_node*)malloc(sizeof(index_node));
-	printf("cuh\n");
+	printf("2. CUHHH\n");
 	readi(ino, curr_dir);
+	printf("ino: %d, curr_dir ino: %d, block_num: %d\n", ino, curr_dir->ino, curr_dir->direct_ptr[1]);
 
 	// Step 2: Get data block of current directory from inode
-	for (int i = 0; i < 16; i++) {
+	for (int i = 0; i < 16; i++) { // looping thru direct_ptrs
 		/** 
 		 * blocks before were all full of dirents that DID NOT contain fname,
 		 * and this block (and therefore subsequent blocks) haven't even been allocated. 
 		 * So the fname is not in this directory.
 		*/ 
 		if (curr_dir->direct_ptr[i] == -1) { 
+			printf("Value of i: %d, and the fname: %s\n", i, fname);
 			free(curr_dir);
 
 			return 0; 
 		}
 		
 		int data_block_num = curr_dir->direct_ptr[i];
-		unsigned char* data_block = (unsigned char *) malloc(BLOCK_SIZE);
+		direntry* data_block = malloc(BLOCK_SIZE);
 		bio_read(data_block_num, data_block);
 
 		// Step 3: Read directory's data block and check each directory entry.
 		//If the name matches, then copy directory entry to dirent structure
-		direntry* ptr = (direntry*) data_block;
-		for (; ptr != NULL && ptr->valid != INVALID; ptr = ptr + 1) {
+		direntry* ptr = data_block;
+		direntry* end = ptr + MAX_DIRENTS;
+		for (; ptr < end && ptr->valid != INVALID; ptr = ptr + 1) {
 			if (strcmp(fname, ptr->name) == 0) { 
 				memcpy(dirent, ptr, sizeof(direntry));
 				
@@ -156,7 +166,10 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 			}
 		}
 
-		if (ptr != NULL && ptr->valid == INVALID) { 
+		if (ptr < end  && ptr->valid == INVALID) { 
+
+			printf("Metro boomin want some mo\n");
+
 			free(data_block);
 			free(curr_dir);
 
@@ -168,23 +181,21 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 }
 
 int dir_add(struct inode* dir_inode, uint16_t f_ino, const char *fname, size_t name_len) { // assumes caller method knows if f_ino is for file or directory
-	int i = 0, j = -1;
-	for (; i < 16; i++) {
+	int i = 0;
+	for (; i < 16; i++) { // go thru all dir pointers
 		if (dir_inode->direct_ptr[i] == -1) {
-			if(j == -1) {
-				j = i;
-			}
-			continue;
+			break;
 		}
 		// Step 1: Read dir_inode's data block and check each directory entry of dir_inode
 		int data_block_num = dir_inode->direct_ptr[i];
-		unsigned char* data_block = (unsigned char *) malloc(BLOCK_SIZE);
+		direntry* data_block = malloc(BLOCK_SIZE);
 		bio_read(data_block_num, data_block);
 		
 		// Step 2: Check if fname (directory name) is already used in other entries
-		direntry* ptr = (direntry*) data_block;
+		direntry* ptr = data_block;
+		direntry * end = ptr + MAX_DIRENTS;
 		int count = 0;
-		for (int i = 0; i < MAX_DIRENTS && ptr->valid != INVALID; i++) {
+		for (int k = 0; k < MAX_DIRENTS && ptr->valid != INVALID; k++) {
 			if (strcmp(fname, ptr->name) == 0) {
 				free(data_block);
 				return 0;
@@ -195,7 +206,7 @@ int dir_add(struct inode* dir_inode, uint16_t f_ino, const char *fname, size_t n
 		}
 
 		// Step 3: Add directory entry in dir_inode's data block and write to disk
-		if (ptr != NULL) {
+		if (ptr < end) {
 			//free(a);
 			ptr->ino = f_ino;
 			ptr->valid = VALID;
@@ -212,12 +223,13 @@ int dir_add(struct inode* dir_inode, uint16_t f_ino, const char *fname, size_t n
 	}
 
 	// Step 3: Add directory entry in dir_inode's data block and write to disk
-	if (j > -1) { // only runs if bro is assigning a 17th or higher file in this directory
+	if (i<16) { // only runs if bro is assigning a 17th or higher file in this directory
 		// Allocate a new data block for this directory if it does not exist
 		int new_block_num = get_avail_blkno();
-		dir_inode->direct_ptr[i] = new_block_num;
+		printf("........................... new_block_num: %d, i: %d\n", new_block_num, i);
+		// dir_inode->direct_ptr[i] = new_block_num;
 
-		direntry* new_block = (direntry*)malloc(BLOCK_SIZE);
+		direntry* new_block = (direntry*)calloc(1, BLOCK_SIZE);
 
 		new_block->ino = f_ino;
 		new_block->valid = VALID;
@@ -230,8 +242,16 @@ int dir_add(struct inode* dir_inode, uint16_t f_ino, const char *fname, size_t n
 		dir_inode->size += 1;
 		dir_inode->vstat.st_size += BLOCK_SIZE;
 
+		printf("ino: %d, block_num: %d\n", dir_inode->ino, dir_inode->direct_ptr[i]);
+
 		// Write directory entry
 		bio_write(new_block_num, new_block);
+		writei(dir_inode->ino, dir_inode);
+
+		// index_node * inn = malloc(sizeof(index_node));
+		// readi(i, inn);
+		// printf("MOTHER FUAAAAA: %d\n", inn->direct_ptr[i]);
+
 		free(new_block);
 
 		return 1;
@@ -290,6 +310,7 @@ int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
 	//direntry* dir_entry = (direntry*) malloc(256);
 
 	if (dir_find(ino, dir_entry_name, 0, ((direntry*)dir_entry)) == 0) { // dirent was not found
+		printf("pussy PUSSY PUSSY FUCK YO CREW WE GON KILL YO CREW - 21 Savage\n");
 		free(dir_entry_name);
 		free(dir_entry);
 		return -1; // failure
@@ -318,11 +339,13 @@ int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
  */
 int rufs_mkfs() {
 
+	printf(">>>>MKFS<<<<<\n");
+
 	// Call dev_init() to initialize (Create) Diskfile
 	dev_init(diskfile_path);
 	
 	// write superblock information
-	sb* supahblock = (sb*)malloc(BLOCK_SIZE); // starts at block 0
+	sb* supahblock = (sb*) calloc(1, BLOCK_SIZE); // starts at block 0
 
 	supahblock->magic_num = MAGIC_NUM;
 	supahblock->max_inum = MAX_INUM;	
@@ -339,24 +362,28 @@ int rufs_mkfs() {
 	supahblock->d_start_blk = supahblock->i_start_blk + total_inode_blocks;
 
 	// initialize inode bitmap
-	bitmap_t inode_bitmap = malloc(supahblock->max_inum/8); // "For completition purposes"
+	bitmap_t inode_bitmap = calloc(1, BLOCK_SIZE); // "For completition purposes"
 
 	// initialize data block bitmap
-	bitmap_t dblock_bitmap = malloc(supahblock->max_dnum); // "For completition purposes"
+	bitmap_t dblock_bitmap = calloc(1, BLOCK_SIZE); // "For completition purposes"
 
 	// update bitmap information for root directory
 	set_bitmap(inode_bitmap, 0);
 
 	// update inode for root directory
-	index_node* root_dir = (index_node*)malloc(sizeof(index_node));
+	index_node* root_dir = (index_node*)calloc(1, BLOCK_SIZE);
 	root_dir->ino = 0;
 	root_dir->valid = VALID;
 	root_dir->size = 1; // because it will have 1 block at the start
+	root_dir->link = 2;
 	for (int i = 0; i < 16; i++) { 
 		root_dir->direct_ptr[i] = -1; 
 	} // setting all direct pointers to invalid
+	for (int i = 0; i < 8; i++) { 
+		root_dir->indirect_ptr[i] = -1; 
+	} 
 
-	direntry* root_dirents = (direntry*) malloc(BLOCK_SIZE);
+	direntry* root_dirents = (direntry*) calloc(1, BLOCK_SIZE);
 	root_dirents->ino = 0; 
 
 	root_dir->direct_ptr[0] = supahblock->d_start_blk;
@@ -366,7 +393,14 @@ int rufs_mkfs() {
 	set_bitmap(dblock_bitmap, 0);
 	set_bitmap(dblock_bitmap, supahblock->i_bitmap_blk);
 	set_bitmap(dblock_bitmap, supahblock->d_bitmap_blk);
-	for (int i = supahblock->i_start_blk; i < supahblock->d_start_blk; i++) { set_bitmap(dblock_bitmap, i); }
+
+	printf("****HERRERERERERER*******");
+
+	for (int i = supahblock->i_start_blk; i < supahblock->d_start_blk; i++) { 
+		set_bitmap(dblock_bitmap, i);
+		printf("*THE i: %d\n", i);
+	}
+
 	set_bitmap(dblock_bitmap, supahblock->d_start_blk); // setting 67th block
 	
 	bio_write(0, supahblock);
@@ -391,9 +425,9 @@ int rufs_mkfs() {
 static void *rufs_init(struct fuse_conn_info *conn) {
 
 	// initializing diskfile_path
-	char* path = "./DISKFILE.txt";
-	strncpy(diskfile_path, path, PATH_MAX-1);
-	diskfile_path[strlen(path)] = '\0';	
+	// char* path = "./DISKFILE.txt";
+	// strncpy(diskfile_path, path, PATH_MAX-1);
+	// diskfile_path[strlen(path)] = '\0';	
 	
 	// Step 1a: If disk file is not found, call mkfs
 	if (dev_open(diskfile_path) == -1) {
@@ -435,6 +469,7 @@ static int rufs_getattr(const char *path, struct stat *stbuf) { // Sibi // initi
 	// bio_read(inode->direct_ptr[0], dd);
 	
 	if (bruh == -1) {
+		printf("Boutta go down\n");
 		free(inode);
 		return -ENOENT;
 	}
@@ -515,8 +550,8 @@ static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, 
 
 static int rufs_mkdir(const char *path, mode_t mode) { // Sibi
 	// Step 1: Use dirname() and basename() to separate parent directory path and target directory name
-	char* p1 = (char*) malloc(strlen(path));
-	char* p2 = (char*) malloc(strlen(path));
+	char* p1 = (char*) malloc(strlen(path)+1);
+	char* p2 = (char*) malloc(strlen(path)+1);
 	memcpy(p1, path, strlen(path)+1);
 	p1[strlen(path)] = '\0';
 	memcpy(p2, path, strlen(path)+1);
@@ -556,6 +591,9 @@ static int rufs_mkdir(const char *path, mode_t mode) { // Sibi
 	// Step 5: Update inode for target directory
 	index_node* target_node = (index_node*)malloc(sizeof(index_node));
 	target_node->direct_ptr[0] = get_avail_blkno();
+
+	printf("*BLOCKO NUMO: %d\n", target_node->direct_ptr[0]);
+
 	for (int i = 1; i < 16; i++) { target_node->direct_ptr[i] = -1; }
 	target_node->ino = ino;
 	target_node->size = 1;
@@ -567,10 +605,11 @@ static int rufs_mkdir(const char *path, mode_t mode) { // Sibi
 	target_node->vstat.st_size = BLOCK_SIZE*target_node->size;
 	target_node->vstat.st_mode = mode | __S_IFDIR;
 	target_node->vstat.st_nlink = 1;
-	time(&(target_node->vstat.st_atime));
-    time(&(target_node->vstat.st_mtime));
-	direntry* dirents = (direntry*) malloc(BLOCK_SIZE);
-	bio_write(target_node->direct_ptr[0], dirents);
+	// time(&(target_node->vstat.st_atime));
+    // time(&(target_node->vstat.st_mtime));
+	//direntry* dirents = (direntry*) malloc(BLOCK_SIZE);
+
+	//bio_write(target_node->direct_ptr[0], dirents);
 	printf("RUUUUUUUSHHD\n");
 	// Step 6: Call writei() to write inode to disk
 	writei(ino, target_node);

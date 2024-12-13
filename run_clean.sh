@@ -1,5 +1,5 @@
 fusermount -u /tmp/st1005/mountdir
+rm DISKFILE
 make clean
 make
-rm DISKFILE.txt
-./rufs -s /tmp/st1005/mountdir -d
+./rufs -s /tmp/rr1185/mountdir -d
