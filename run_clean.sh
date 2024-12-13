@@ -1,4 +1,3 @@
-fusermount -u /tmp/st1005/mountdir
 rm DISKFILE
 make clean
 make
